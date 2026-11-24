@@ -12,6 +12,8 @@ Categories:
 
 """
 
+vague = "Sort this support ticket into billing, shipping or other and give it a priority."
+
 examples = [
     {"role": "user", "content": "Where is my delivery? It is a week late"},
     {"role": "assistant", "content": '{"category": "shipping", "priority": 3}'},
@@ -28,6 +30,8 @@ examples = [
 
 from groq import Groq
 from dotenv import load_dotenv
+from pydantic import BaseModel, ValidationError, Field
+from typing import Literal
 
 load_dotenv()
 
@@ -48,6 +52,24 @@ def ask(messages, **settings):
     response = client.chat.completions.create(model="openai/gpt-oss-120b", messages=messages, **settings)
     return response.choices[0].message.content
 
-for text, expected in tickets:
-    answer = ask([ *examples, {"role": "user", "content": text}])
-    print(f"{expected:9} {answer}")
+class Triage(BaseModel):
+    category: Literal["billing", "shipping", "other"]
+    priority: int = Field(ge=1, le=5)
+
+def check(answer):
+    try:
+        return Triage.model_validate_json(answer)
+    except ValidationError:
+        return None
+
+prompts = {
+    "vague": [{"role": "system", "content": vague}],
+    "few-shot": [{"role": "system", "content": structured}, *examples],
+    "Without few-shot": [{"role": "system", "content": structured}]
+}
+for label, start in prompts.items():
+    results = [check(ask(start + [{"role": "user", "content": text}])) for text, _ in tickets]
+    passed = sum(result is not None for result in results)
+    print(f"{label}: {passed} of {len(results)} answers passed the check")
+
+print(f"This will fail becuase of pydantic validation. Priority is greater than 5", check('{"category": "billing", "priority": 9}') )
